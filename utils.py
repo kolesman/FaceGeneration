@@ -39,8 +39,8 @@ def PyramidPixelCNN(x, seed, channels=100, D=2, L=2, l=3, num_outputs=100):
 
     # ######################################
 
-    xs = int_shape(x)
-    x_pad = tf.concat([x, tf.ones(xs[:-1] + [1])], 3)
+    x_pad = tf.concat([x, tf.ones(int_shape(x[:, :, :, None, :])[:-1])], 3)
+    x_pad.set_shape([4, None, None, 4])
 
     u = down_shift(down_shifted_conv2d(x_pad, "conv_down", filter_size=[2, 3], out_channels=channels))
     ul = down_shift(down_shifted_conv2d(x_pad, "conv_down_2",  filter_size=[1, 3], out_channels=channels)) + \
@@ -181,7 +181,8 @@ def deconv(inp, name, filter_size, out_channels, stride=1,
     with tf.variable_scope(name):
 
         strides = [1, stride, stride, 1]
-        [N, H, W, in_channels] = inp.get_shape().as_list()
+        [N, H, W, in_channels] = tf.shape(inp)[0], tf.shape(inp)[1], tf.shape(inp)[2], tf.shape(inp)[3]
+        in_channels = inp.get_shape().as_list()[3]
 
         if padding == 'SAME':
             target_shape = [N, H * stride, W * stride, out_channels]
@@ -194,6 +195,8 @@ def deconv(inp, name, filter_size, out_channels, stride=1,
             V_norm = tf.nn.l2_normalize(V.initialized_value(), [0, 1, 2])
             out = tf.nn.conv2d_transpose(inp, V_norm, target_shape, strides, padding)
             m_init, v_init = tf.nn.moments(out, [0, 1, 2])
+            m_init.set_shape([out_channels])
+            v_init.set_shape([out_channels])
             scale_init = init_scale / tf.sqrt(v_init + 1e-8)
             g = tf.get_variable('g', shape=None, dtype=tf.float32, initializer=scale_init, trainable=True)
             b = tf.get_variable('b', shape=None, dtype=tf.float32, initializer=-m_init * scale_init, trainable=True)
@@ -270,7 +273,8 @@ def down_right_shifted_deconv2d(x, name, filter_size, out_channels, stride=1, no
 
 
 def int_shape(x):
-    return list(map(int, x.get_shape()))
+    return tf.shape(x)
+    # return list(map(int, x.get_shape().as_list()))
 
 
 def log_sum_exp(x):
@@ -289,23 +293,25 @@ def log_prob_from_logits(x):
 
 
 def sample_from_discretized_mix_logistic(l, scale_var=0.0, nr_mix=10):
-    ls = int_shape(l)
-    xs = ls[:-1] + [3]
+    #ls = l.get_shape().as_list()
+    #xs = ls[:-1] + [3]
+    ls = tf.shape(l)
+    xs = tf.concat([ls[:-1], [3]], 0)
     # unpack parameters
     logit_probs = l[:, :, :, :nr_mix]
-    l = tf.reshape(l[:, :, :, nr_mix:], xs + [nr_mix*3])
+    l = tf.reshape(l[:, :, :, nr_mix:], tf.concat([xs, [nr_mix * 3]], 0))
     # sample mixture indicator from softmax
-    sel = tf.one_hot(tf.argmax(logit_probs - tf.log(-tf.log(tf.random_uniform(logit_probs.get_shape(), minval=1e-5, maxval=1. - 1e-5))), 3), depth=nr_mix, dtype=tf.float32)
-    sel = tf.reshape(sel, xs[:-1] + [1, nr_mix])
+    sel = tf.one_hot(tf.argmax(logit_probs - tf.log(-tf.log(tf.random_uniform(tf.shape(logit_probs), minval=1e-5, maxval=1. - 1e-5))), 3), depth=nr_mix, dtype=tf.float32)
+    sel = tf.reshape(sel, tf.concat([xs[:-1], [1, nr_mix]], 0))
     # select logistic parameters
     means = tf.reduce_sum(l[:, :, :, :, :nr_mix] * sel, 4)
     log_scales = tf.maximum(tf.reduce_sum((scale_var + l[:, :, :, :, nr_mix:2 * nr_mix]) * sel, 4), -7.)
     coeffs = tf.reduce_sum(tf.nn.tanh(l[:, :, :, :, 2 * nr_mix:3 * nr_mix]) * sel, 4)
     # sample from logistic & clip to interval
     # we don't actually round to the nearest 8bit value when sampling
-    u = tf.random_uniform(means.get_shape(), minval=1e-5, maxval=1. - 1e-5)
+    u = tf.random_uniform(tf.shape(means), minval=1e-5, maxval=1. - 1e-5)
     x = means + tf.exp(log_scales)*(tf.log(u) - tf.log(1. - u))
     x0 = tf.minimum(tf.maximum(x[:, :, :, 0], -1.), 1.)
     x1 = tf.minimum(tf.maximum(x[:, :, :, 1] + coeffs[:, :, :, 0] * x0, -1.), 1.)
     x2 = tf.minimum(tf.maximum(x[:, :, :, 2] + coeffs[:, :, :, 1] * x0 + coeffs[:, :, :, 2] * x1, -1.), 1.)
-    return tf.concat([tf.reshape(x0, xs[:-1] + [1]), tf.reshape(x1, xs[:-1] + [1]), tf.reshape(x2, xs[:-1] + [1])], 3)
+    return tf.concat([tf.reshape(x0, tf.concat([xs[:-1], [1]], 0)), tf.reshape(x1, tf.concat([xs[:-1], [1]], 0)), tf.reshape(x2, tf.concat([xs[:-1], [1]], 0))], 3)
