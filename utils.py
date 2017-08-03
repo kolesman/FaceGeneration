@@ -14,6 +14,8 @@ tf.GLOBAL['dropout'] = 0.0
 
 def PyramidPixelCNN(x, seed, channels=100, D=2, L=2, l=3, num_outputs=100):
 
+    batch_size = x.get_shape().as_list()[0]
+
     conditioning = None
     if seed is not None:
 
@@ -40,7 +42,7 @@ def PyramidPixelCNN(x, seed, channels=100, D=2, L=2, l=3, num_outputs=100):
     # ######################################
 
     x_pad = tf.concat([x, tf.ones(int_shape(x[:, :, :, None, :])[:-1])], 3)
-    x_pad.set_shape([4, None, None, 4])
+    x_pad.set_shape([batch_size, None, None, 4])
 
     u = down_shift(down_shifted_conv2d(x_pad, "conv_down", filter_size=[2, 3], out_channels=channels))
     ul = down_shift(down_shifted_conv2d(x_pad, "conv_down_2",  filter_size=[1, 3], out_channels=channels)) + \
